@@ -1,0 +1,249 @@
+---
+title: "n22_apriori_rms_produk_petani_kategori"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Import Library dan Source Code Tambahan
+Import library dan user defined function(UDF). Pada usecase ini, terdapat UDF khusus untuk membuat model dapat diterapkan secara iteratif. UDF berupa script R terpisah dapat diakses pada path berikut: ~/script_R/n22/apriori/market_basket_rms_kategori.R 
+
+```{r}
+#Load Package
+library(arules)
+library(arulesViz)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(sparklyr)
+
+library(gdata)
+library(glue)
+```
+
+Membuat function untuk eksekusi model secara iteratif untuk setiap negara
+
+```{r}
+training_market_basket_by_country <- function (tr_single, country = "", arule_support = 0.0, arule_confidence = 0.0, arule_min_support = 0.0, arule_min_confidence = 0.0, max_date = "", min_date = "") {
+    cat(paste0("\n######################### Parameter: sup=", arule_support, " | conf=", arule_confidence, " | min_sup=", arule_min_support, " | min_conf=", arule_min_confidence, " ==================\n"))
+    
+    arule_result <- apriori(tr_single, parameter = list(supp=arule_support, conf=arule_confidence,  minlen=2)) 
+    summary(arule_result)
+    if (all(!is.na(summary(size(arule_result)))))  {
+        df_arule_result <- data.frame(
+            lhs = labels(lhs(arule_result)),
+            rhs = labels(rhs(arule_result)),
+            arule_result@quality,
+            min_confidence=arule_min_confidence,
+            min_support=as.double(arule_min_support),
+            country = country) %>%
+            mutate(lhs = gsub('\\{|\\}', '', lhs),
+                   rhs = gsub('\\{|\\}', '', rhs),
+                   min_date=min_date,
+                   max_date=max_date,
+                   tanggal_analisis=as.Date(Sys.Date(), "%Y-%m-%d"))
+        
+        df_arule_result_lhs_size <- df_arule_result %>% mutate(lhs_length = sapply(strsplit(as.character(lhs), ","), length))
+        df_arule_result_final <- df_arule_result_lhs_size 
+    } else {
+        print (paste0("df_arule_result_final [sup=", arule_support, "][conf=", arule_confidence, "] is null"))
+        
+        df_arule_result_final <- NULL
+    }
+    
+    return(list("df_arule_result_final" = df_arule_result_final))
+}
+
+```
+
+
+## 2. Membuat Fuction untuk Looping Pembuatan Model
+Pembuatan model dilakukan pada setiap kombinasi kategori_produk, country, kabupaten, kecamatan. Output Function ini berupa tanggal terakhir dari data olahan yang diterima sebagai input serta hasil analisis apriori untuk setiap kombinasi data diatas.
+
+```{r}
+process_apriori <- function(df_tr_single_v1d, apriori_config_list, country, last_date){
+  datas <- data.frame(NULL)
+  
+  df_tr_single_v1e <- df_tr_single_v1d %>% mutate(data_date = as.Date(date, "%Y-%m-%d")) #data_date jadi date
+  df_tr_single_v1f<-df_tr_single_v1e[order(df_tr_single_v1e$data_date),] 
+  
+  #df_tr_single_v1f <- df_tr_single_v1f %>% filter(date>((tail(df_tr_single_v1f$date,1))-1095)) #baru
+  df_tr_single_v1g <- df_tr_single_v1f %>% select (-data_date) #baru
+  
+  df_tr_single_v1h <- df_tr_single_v1g %>% mutate (BillNo=as.factor(BillNo),
+                                                   item=as.factor(Itemname))
+  
+  df_tr_single_v1h1 <- df_tr_single_v1h %>% mutate (item = str_replace_all(item, ",", "#####"))
+  
+  df_tr_single_v1i = as.data.frame(df_tr_single_v1h1)
+  
+  #dari sini data RMS
+  tr_single <- as(split(df_tr_single_v1i[, "item"], df_tr_single_v1i[, "BillNo"]), "transactions")
+  
+  
+  min_date_v0<-df_tr_single_v1f$data_date%>%head(1)
+  max_date_v0<-df_tr_single_v1f$data_date%>%tail(1)
+  
+  min_date <- as.Date(min_date_v0, "%Y-%m-%d")
+  max_date <- as.Date(max_date_v0, "%Y-%m-%d")
+  
+  if (is.null(last_date)) {
+    last_date <- max_date
+  } else {
+    if (max_date > last_date) {
+      last_date <- max_date
+    }
+  }
+  
+  for (i in 1:nrow(apriori_config_list)){
+    arule_result <- training_market_basket_by_country(
+      tr_single,
+      country = country,
+      arule_support = apriori_config_list["support"][i,], 
+      arule_confidence = apriori_config_list["confidence"][i,], 
+      arule_min_support = apriori_config_list["min_support"][i,], 
+      arule_min_confidence = apriori_config_list["min_confidence"][i,],
+      max_date = max_date,
+      min_date = min_date
+    )
+    
+    if (!is.null(arule_result)){
+      datas <- bind_rows(datas, arule_result$df_arule_result_final)
+    }
+  }
+  
+  return(list("datas" = datas, "last_date" = last_date))
+}
+```
+
+## 3. Set Parameter
+Set parameter sesuai kebutuhan input Function, membuat koneksi ke Hive, dan set parameter default untuk mengkategorikan hasil analisis berdasarkan batas nilai. 
+
+```{r}
+jenis_analisis <- "Itemname"
+#list_jenis_analisis <- c("Itemname")
+#path_output <- "/data/out/scm/n22/apriori/analytic/"
+#database_name <- "scm_base"
+#table_name <- "n22_analisis_rms_penjualan_produk_petani_kategori"
+
+last_date <- NULL
+datas_temp <- data.frame(NULL)
+apriori_config_list <- data.frame(
+  support <- c(0.01, 0.1),
+  confidence <- c(0.5, 0.5),
+  min_support <- c(0.01, 0.1),
+  min_confidence <- c(0.5, 0.5)
+)
+colnames(apriori_config_list) <- c("support", "confidence", "min_support", "min_confidence")
+
+apriori_config_list
+```
+
+## 4. Load Tabel dan Melakukan Data Preprocessing
+Tabel diperoleh dari Hive. Selanjutnya tabel diolah dengan membuat kolom date, merubah kolom date dalam tipe data date, kemudian melakukan concat untuk kolom date dan id_petani. Tabel kemudian di filter dengan produksi=="PI" dan kolom produksi dihapus.
+
+```{r}
+# Load Table and Data Preprocessing
+df_tr_single_v1a = read.csv("D:/Kuliah/semester_1/data_mining_and_business_intelligence/UAS/Assignment-1_Data.csv", sep = ";",
+                 dec = ",") %>% distinct()
+
+str(df_tr_single_v1a)
+df_tr_single_v1c1 = df_tr_single_v1a%>% mutate(date=as.Date(Date, "%d/%m/%Y"))%>%
+  select(,-c(Date,Price, CustomerID, Quantity))%>%drop_na()
+
+head(df_tr_single_v1c1)
+
+df_tr_single_v1d <- df_tr_single_v1c1 #%>% filter(produksi=="PI")%>% select(-produksi) 
+
+unique(df_tr_single_v1d$date)
+```
+
+## 5. Melakukan Training Model secara Iteratif
+Training model apriori secara iteratif untuk setiap kombinasi kategori produk, provinsi, kabupaten, dan kecamatan
+
+```{r}
+apriori_result <- process_apriori(
+  df_tr_single_v1d,
+  apriori_config_list,
+  "ALL COUNTRY",
+  last_date
+)
+
+apriori_result
+
+sampai sini
+```
+
+```{r}
+apriori_config_list_c <- data.frame(
+  support <- c(0.7, 0.8),
+  confidence <- c(0.6, 0.6),
+  min_support <- c(0.7, 0.8),
+  min_confidence <- c(0.6, 0.6)
+)
+colnames(apriori_config_list_c) <- c("support", "confidence", "min_support", "min_confidence")
+```
+
+
+```{r}
+last_date <- apriori_result$last_date
+
+datas_temp <- bind_rows(datas_temp, apriori_result$datas)
+
+datas_temp
+
+df_country_list <- df_tr_single_v1d %>% group_by(Country) %>% summarise(count = n()) %>% ungroup()
+
+df_country_list
+
+for (i in 1:nrow(df_country_list)){
+  current_country <- as.character(df_country_list["Country"][i,])
+  
+  cat(paste0("COUNTRY: ", current_country, "\n"))
+  
+  df_current_country <- df_tr_single_v1d %>% filter(Country == current_country)
+  
+  apriori_result <- process_apriori(
+    df_current_country,
+    apriori_config_list_c,
+    current_country, 
+    last_date
+  )
+  
+  last_date <- apriori_result$last_date
+  datas_temp <- bind_rows(datas_temp, apriori_result$datas)
+}
+```
+
+## 6. Membuat Tabulasi Data Transaksi 
+Membuat tabel tabulasi di tingkat Itemname. Tabel ini guna menghitung kemunculan bersama antara setiap 2 produk yang dibeli. 
+
+```{r}
+df_master_item <- df_tr_single_v1a %>%   
+  rename(item=Itemname) %>% 
+  mutate(item=trimws(item)) %>%
+  mutate(
+    kode_item = str_replace_all(item, " ", "_")  
+  ) %>%
+  group_by(item, kode_item) %>%
+  summarise(jml_item = n()) %>%
+  select(item, kode_item, jml_item) %>%
+  collect()
+```
+
+## 7. Persiapan Load Tabel ke HDFS dan HIVE
+
+```{r}
+# Prepare Load Table to HDFS and HIVE
+datas_temp
+
+datas <- datas_temp %>% rename(provinsi=country)
+
+last_date <- format(last_date,"%Y%m%d")
+```
+
+

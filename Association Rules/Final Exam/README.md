@@ -1,0 +1,2 @@
+- Link to Dataset: <https://www.kaggle.com/datasets/aslanahmedov/market-basket-analysis>
+- Link to Tableau Dashboard: <https://public.tableau.com/app/profile/randi.eka.sanjaya/viz/shared/6F5J54W6M>

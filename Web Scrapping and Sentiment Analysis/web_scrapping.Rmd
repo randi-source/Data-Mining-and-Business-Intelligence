@@ -1,0 +1,458 @@
+---
+title: "225612018 Web Scrapping"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This scenario is inspired by Future Today Institute which provide leading strategic foresight and management consultant by applying data driven applied research  to reveals trends and calculate how they will distrupt business, government, and society.
+
+As a junior consultant in FTI, I was given tasks to create blog content that alligned with today's trend in Artificial Intelligence field. In regards with my ignorance in this topic, i was thinking from where d I start? what topic should i studied and cover in the articles?
+
+After thinking it thoroughtly, I decide to create articles from the negative side artificial intelligence that mostly being speak of, from the sub topic that mostly appear in artificial intelligence. 
+
+With that in mind, I have set the step as described below:
+
+1. Find relevant news website that available to scrape and providing AI news
+2. Scrapping the title from articles for the past one year
+3. Text mining on news title
+4. Sentiment analysis
+a. Using bing lexicon
+b. Using nrc lexicon
+c. Using afinn lexicon
+d. Compare all lexicon
+e. Create visualization
+- Bar chart
+- Word Cloud
+
+
+### Import Libraries
+```{r, echo=FALSE,results='hide'}
+library(robotstxt) # verify whether we can scrape the website or not
+library(rvest) # Extract the data from the webpage
+library(selectr) # 
+library(xml2) #download the webpages as an XML document, then from XML document we will extract the data using address
+library(dplyr)
+library(stringr)
+library(forcats)
+library(magrittr)
+library(tidyr) #tidying or reshaping the data for data analysis
+library(ggplot2)
+library(lubridate)
+library(tibble)
+library(purrr)
+library(httr)
+library(janitor)
+library(furrr)
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+plan(multiprocess)
+```
+
+## 1. Find relevant news website that available to scrape and providing AI news
+
+Check whether we can scrape this website
+```{r}
+paths_allowed(
+  paths =c("https://venturebeat.com/category/ai/page/1/")
+)
+
+```
+this website allow scrapping
+
+Scrapping website data for job title and posting date
+```{r}
+scrape_news_ai = function(x) {
+  GET(x, add_headers("user-agent"="Hi, I am randi. I had college week assignment to do web scraping and interested to use VentureBeat data for creating text-mining analysis, this is just for the college task only and i consent to not share it outside this scope, please get in touch with me in ([[randi.eka1301@gmail.com]])"))%>%
+  read_html(x)%>%
+  {tibble(
+    title = html_nodes(., ".ArticleListing__title-link")%>%
+      html_text(),
+    date = html_nodes(., ".ArticleListing__time")%>%
+      html_text()
+  )}%>%
+    mutate(title = make_clean_names(title, sep_out = " "))
+}
+```
+
+
+```{r, echo=FALSE}
+#scrape_news_ai(x = "https://venturebeat.com/category/ai/page/1/")
+
+#View(news)
+```
+
+## 2.Scrapping the title from articles for the past one year
+
+Create multiple link for iteration
+```{r}
+news_urls = paste0("https://venturebeat.com/category/ai/page/", seq_len(40))
+```
+
+Scrape all data
+```{r}
+news_raw = future_map_dfr(news_urls, possibly(scrape_news_ai, otherwise = NULL), .progress=TRUE)
+```
+
+
+Transform string to date format
+```{r}
+news_proc = news_raw%>%
+  mutate(date=lubridate::mdy_hm(date))%>%
+  glimpse()
+
+#head(news_proc)
+```
+
+## 3. Text Mining on News Title
+
+### Parsing Title to Words
+
+Parse title to words
+```{r}
+news_clean = news_proc %>%
+  dplyr::select(title) %>%
+  unnest_tokens(word, title)
+
+tail(news_clean, n=20)
+```
+
+Parsing data visualization
+```{r}
+news_clean %>% 
+  count(word, sort=TRUE) %>%
+  top_n(15)%>%
+  mutate(word=reorder(word,n))%>%
+  ggplot(aes(x=word, y=n))+geom_col()+xlab(NULL)+coord_flip()+labs(x="Count",y="Unique words",title="Count of Unique Words Found in News")
+```
+
+### Stop Word Removal
+
+Meaning of lexicon: <https://www.vocabulary.com/dictionary/lexicon>
+Lexicon contained in this dataset: <https://juliasilge.github.io/tidytext/reference/stop_words.html>
+```{r}
+data("stop_words")
+
+head(stop_words)
+
+nrow(news_clean)
+
+cleaned_news_words = news_clean %>%
+  anti_join(stop_words) # is antijoin function is to eliminate similar data between 2 dataset?
+
+nrow(cleaned_news_words)
+```
+
+```{r}
+cleaned_news_words %>%
+  count(word, sort=TRUE) %>%
+  top_n(15)%>%
+  mutate(word=reorder(word,n))%>%
+  ggplot(aes(x=word,y=n))+
+  geom_col()+
+  xlab(NULL)+
+  coord_flip()+
+  labs(y="Count",x="Unique words",
+       title="Count of Unique Words Found in News",
+       subtitle="Stop Words Removed from the List")
+```
+
+### N-Gramming
+
+```{r}
+#install.packages("widyr")
+library(widyr)
+
+news_paired_words = news_proc %>%
+  dplyr::select(title)%>%
+  unnest_tokens(paired_words, title,token="ngrams",n=2)
+
+news_paired_words%>%
+  count(paired_words, sort=TRUE)
+
+news_separated_words <- news_paired_words %>% 
+  tidyr::separate(paired_words,c("word1","word2"),sep=" ") 
+
+news_filtered <- news_separated_words  %>% 
+  filter(!word1%in%stop_words$word) %>% 
+  filter(!word2%in%stop_words$word)
+  
+news_counts <- news_filtered  %>% 
+  count(word1,word2,sort=TRUE) 
+  
+head(news_separated_words)
+```
+
+Word network visualization
+```{r}
+news_counts  %>%
+  filter(n>=15) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout="fr") +
+  geom_edge_link(aes(width = n, edge_alpha = n), show.legend = FALSE,edge_colour = "white")+
+  geom_node_point(color="darkslategray4",size=3)+
+  geom_node_text(aes(label=name),vjust=1.8,size=3)+
+  labs(title="Word Network: AI News",
+  subtitle="Text mining venturebeat.com",
+  x="",y="")
+
+```
+
+From here, there are several interesting topic to cover based on the frequencies 
+
+1. Digital twin, supply chain
+2. AI powered
+3. Conversational AI
+4. Computer Vision
+5. Generative AI
+
+This 5 topics are consider interesting to reader since the frequencies of appearance is more than 15. Next, lets going into sentiment analysis to find the negative term to be paired with the topics above
+
+## 4. Sentiment Analysis
+
+Load all lexicon provided by library tidytext
+```{r}
+library(tidytext)
+#install.packages("textdata")
+
+get_sentiments("afinn")
+get_sentiments("bing")
+get_sentiments("nrc")
+```
+
+Tokenizing news title
+```{r}
+news_clean_s = news_proc %>%
+  dplyr::select(title) %>%
+  unnest_tokens(word, title)
+
+tail(news_clean_s, n=20)
+```
+
+### Using NRC Lexicon
+
+Measure Negative Sentiment
+```{r}
+nrc_negative = get_sentiments("nrc")%>%
+  filter(sentiment == "negative")
+
+news_clean_s %>%
+  inner_join(nrc_negative)%>%
+  count(word,sort=TRUE)
+  
+```
+
+### Using Bin Lexicon
+
+data preprocessing
+```{r}
+news_proc
+
+tidy_news = news_proc
+#tidy_news$title_group = tidy_news$title
+tidy_news = tidy_news[c(-2)]
+tidy_news$index = 1:nrow(tidy_news)
+
+tidy_news2  = tidy_news %>%
+  mutate(title = strsplit(as.character(title), " "))%>%
+  unnest(title)
+
+tidy_newsm = merge(x=tidy_news, y=tidy_news2, by="index", all.y=TRUE)
+colnames(tidy_newsm)[3] = "word"
+
+
+
+tidy_newsm = as.tbl(tidy_newsm)
+str(tidy_newsm)
+```
+
+
+```{r}
+library(tidyr)
+
+sentiment_news = tidy_newsm %>%
+  inner_join(get_sentiments("bing"))%>%
+  count(title.x ,index, sentiment)%>%
+  pivot_wider(names_from = sentiment, values_from=n, values_fill = 0)%>%
+  mutate(sentiment = positive - negative)
+  
+  
+sentiment_news
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(sentiment_news, aes(index, sentiment, fill = title.x)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~title.x, ncol = 2)
+```
+The visualization wasnt success since the category is just too much
+
+```{r}
+#test = get_sentiments("bing")
+#test
+#write.csv(test, "D:/Kuliah/semester_1/data_mining_and_business_intelligence/Pertemuan 14/Tugas/lexicon_bing.csv")
+```
+
+### Using Afinn Lexicon
+```{r}
+afinn <- tidy_newsm %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+afinn
+```
+
+
+### Comparing the three sentiment dictionaries
+
+```{r}
+bing_and_nrc <- bind_rows(
+  tidy_newsm %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  tidy_newsm %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index, sentiment) %>%
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+```
+
+
+```{r}
+bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+```
+
+From the graph, we can see that 
+1. Bing lexicon produce the most negative sentiment
+2. NRC lexicon produce the least negative sentiment
+3. Overall, the news title have bigger portion of positive statement than negative statement
+
+lets take a look for the point 1 and 2
+
+```{r}
+get_sentiments("nrc") %>% 
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  count(sentiment)
+```
+
+
+```{r}
+get_sentiments("bing") %>% 
+  count(sentiment)
+```
+
+Both lexicons have more negative than positive words, but the ratio of negative to positive words is higher in the Bing lexicon than the NRC lexicon. This will contribute to the effect we see in the plot above, as will any systematic difference in word matches, e.g. if the negative words in the NRC lexicon do not match the words that Jane Austen uses very well. Whatever the source of these differences, we see similar relative trajectories across the narrative arc, with similar changes in slope, but marked differences in absolute sentiment from lexicon to lexicon. This is all important context to keep in mind when choosing a sentiment lexicon for analysis.
+
+Since the goal is to find the top negative sentiment, lexicon bing is choosen
+
+
+```{r}
+bing_word_counts <- tidy_newsm %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+#bing_word_counts
+```
+
+
+```{r}
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+Based on the graph:
+1. Cloud is missclasified into negative sentiment, since cloud mostly used as computing resource in information system architecture.
+2. The most negative sentiment comes from bias, fraud, and thread. Problem wasnt included since all of those 3 are problems already
+
+```{r, echo=FALSE}
+#custom_stop_words <- bind_rows(tibble(word = c("cloud"),  
+#                                      lexicon = c("custom")), 
+#                               stop_words)
+
+#custom_stop_words
+```
+
+Create wordcloud for overall token
+```{r}
+library(wordcloud)
+
+tidy_newsm %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+
+Create wordcloud based on bing lexicon sentiment
+```{r}
+library(reshape2)
+
+tidy_newsm %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+```
+
+## Summary
+
+From the analysis, the most appeared sub topic of AI are:
+
+1. Digital twin, supply chain
+2. AI powered
+3. Conversational AI
+4. Computer Vision
+5. Generative AI
+
+Also, the most negative sentiments are:
+
+1. Bias 
+2. Fraud
+3. Thread
+
+
+Therefore, the topic option are:
+
+1. Digital twin, supply chain (bias, fraud, thread)
+2. AI powered (bias, fraud, thread)
+3. Conversational AI (bias, fraud, thread)
+4. Computer Vision (bias, fraud, thread)
+5. Generative AI (bias, fraud, thread)
+
+Based on my perspective, i am interested in 
+
+1. Digital twin, supply chain thread
+2. AI powered bias
+3. Computer vision thread
+4. Generative AI bias
+
+This mark the end of the analysis, happy learning!
+

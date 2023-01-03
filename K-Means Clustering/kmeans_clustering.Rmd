@@ -1,0 +1,628 @@
+---
+title: "Tugas Clustering"
+editor_options: null
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## About this Dataset
+
+### Problem Statement
+
+Customer Personality Analysis is a detailed analysis of a company's ideal customers. It helps a business to better understand its customers and makes it easier for them to modify products according to the specific needs, behaviors and concerns of different types of customers.
+
+Customer personality analysis helps a business to modify its product based on its target customers from different types of customer segments. For example, instead of spending money to market a new product to every customer in the company's database, a company can analyze which customer segment is most likely to buy the product and then market the product only on that particular segment.
+
+### Attributes
+
+#### People
+
+- ID: Customer's unique identifier
+- Year_Birth: Customer's birth year
+- Education: Customer's education level
+- Marital_Status: Customer's marital status
+- Income: Customer's yearly household income
+- Kidhome: Number of children in customer's household
+- Teenhome: Number of teenagers in customer's household
+- Dt_Customer: Date of customer's enrollment with the company
+- Recency: Number of days since customer's last purchase
+- Complain: 1 if the customer complained in the last 2 years, 0 otherwise
+
+#### Products
+
+- MntWines: Amount spent on wine in last 2 years
+- MntFruits: Amount spent on fruits in last 2 years
+- MntMeatProducts: Amount spent on meat in last 2 years
+- MntFishProducts: Amount spent on fish in last 2 years
+- MntSweetProducts: Amount spent on sweets in last 2 years
+- MntGoldProds: Amount spent on gold in last 2 years
+
+#### Promotion
+
+- NumDealsPurchases: Number of purchases made with a discount
+- AcceptedCmp1: 1 if customer accepted the offer in the 1st campaign, 0 otherwise
+- AcceptedCmp2: 1 if customer accepted the offer in the 2nd campaign, 0 otherwise
+- AcceptedCmp3: 1 if customer accepted the offer in the 3rd campaign, 0 otherwise
+- AcceptedCmp4: 1 if customer accepted the offer in the 4th campaign, 0 otherwise
+- AcceptedCmp5: 1 if customer accepted the offer in the 5th campaign, 0 otherwise
+- Response: 1 if customer accepted the offer in the last campaign, 0 otherwise
+
+#### Place
+
+- NumWebPurchases: Number of purchases made through the company's website
+- NumCatalogPurchases: Number of purchases made using a catalogue
+- NumStorePurchases: Number of purchases made directly in stores
+- NumWebVisitsMonth: Number of visits to company's website in the last month
+
+### Target
+Need to perform clustering to summarize customer segments.
+
+Dataset Source: <https://www.kaggle.com/code/karnikakapoor/customer-segmentation-clustering/data?select=marketing_campaign.csv>
+
+
+#### Load dataset
+```{r}
+df_raw = read.csv("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/Pertemuan 10/Tugas/marketing_campaign.csv", sep=";")
+head(df_raw)
+```
+
+#### Look for the data structure
+```{r}
+str(df_raw)
+```
+
+#### Transform dataset to its respective datatype
+```{r}
+# Datatype Transformation
+df_dt = df_raw
+cat_cols = c(1,3,4,8,21,22,23,24,25,26,29)
+
+df_dt_cat = as.data.frame(apply(df_dt[,cat_cols],2,as.character))
+str(df_dt_cat)
+
+df_dt = df_dt[c(-1,-8,-21,-22,-23,-24,-25,-26,-29)]
+#str(df_dt)
+
+# Outer Join Dataset
+df_dt = data.frame(df_dt_cat,df_dt)
+
+#str(df_dt)
+```
+
+For the record, there is no information whatsoever about variables Z_CostContract or Z_Revenue, therefore those variables are excluded from the analyses
+```{r}
+str(df_dt)
+df_dt_num_exc = data.frame(df_dt[c(30,31)])
+df_dt= data.frame(df_dt[c(-30,-31)])
+
+str(df_dt)
+```
+
+#### Check Null Values
+```{r}
+lapply(df_dt,function(x) { length(which(is.na(x)))})
+```
+
+There are missing data on Income variables which occur 24 times, therefore there is a need to do data imputation. To do imputation it uses Amelia package. Before utilizing the package, there is two assumption that is:
+
+1. All variables in a data set have Multivariate Normal Distribution (MVN).
+2. Missing data is random in nature (Missing at Random)
+
+Source: <https://www.analyticsvidhya.com/blog/2016/03/tutorial-powerful-packages-imputing-missing-values/>
+
+Therefore lets check both:
+```{r}
+library(tidyverse)
+#install.packages("rstatix")
+library(rstatix)
+
+# Select non metric variables
+df_dt_nm = df_dt %>%
+  select(where(is.character))
+
+# Select metric variables
+df_dt_m = df_dt %>%
+  select(where(is.integer))
+
+str(df_dt_m)
+
+all_var = names(df_dt_m)
+
+df_dt_m %>% 
+  shapiro_test(all_var)
+
+```
+Here, the p-value indicating normality accross all variables, therefore there is no need to do normalization
+
+Next, let's check whether the missing data is MAR (Missing at Random), but currently still have no idea whatsoever
+```{r}
+
+
+```
+
+
+```{r}
+#install.packages("Amelia")
+library(Amelia)
+
+df_im = amelia(df_dt_m, m=1, parallel = "multicore")
+
+df_im = as.data.frame(df_im$imputations[[1]])
+
+lapply(df_im,function(x) { length(which(is.na(x)))})
+```
+Here, it success impute the missing values within income variable. The take on this approach is to understand the method uses with bootstrap based EMB algorithm. More on that later.
+
+### Check for outliers
+```{r}
+library(reshape2)
+library(ggplot2)
+
+meltData <- melt(df_im)
+p <- ggplot(meltData, aes(factor(variable), value)) 
+p + geom_boxplot() + facet_wrap(~variable, scale="free")
+
+```
+
+Here, there are outliers lies almost on all variables, so let's identify them with assumptions in mind.
+
+1. Year_Birth has outliers for very old customer
+2. Income has outliers for people with very high income
+3. MntWines has outliers for people who often buy wine in the past 2 years
+4. MntFruits has outliers for people who often buy fruits in the past 2 years
+5. MntMeatProducts has outliers for people who often buy meat in the past 2 years
+6. MntFishProducts has outliers for people who often buy fish in the past 2 years
+7. MntSweetProducts has outliers for people who often buy sweet products in the past 2 years
+8. MntGoldProds has outliers for people who often buy gold in the past 2 years
+9. NumDealsPurchases has outliers for people who often purchases product with discounts
+10. NumWebPurchases has outliers for people who often made purchase from the website
+11. NumCatalogPurchases has outlier for people who purchases based on catalog
+12. NumWebVisitMonth has outliers for people who often visit company website from last month
+
+From the diagnosis, all of the variables that has outliers, has its own reason and assumed to be okay to be included in the segmentation. 
+
+
+### Standarization:
+```{r}
+# Min-Max 
+min_max <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+
+df_str = as.data.frame(lapply(df_im, min_max))
+
+summary(df_str)
+```
+
+#### Feature Selection
+```{r}
+library(psych)
+library(corrplot)
+
+corrplot(cor(df_str, df_str),
+         method = c("number"), 
+         #bg = "grey10",
+         addgrid.col = "gray50",
+         tl.cex=0.5,
+         number.cex=0.5)
+
+df_str = df_str[c(-6,-7,-8,-9,-10,-11, -14,-15,-16)]
+
+corrplot(cor(df_str, df_str),
+         method = c("number"), 
+         #bg = "grey10",
+         addgrid.col = "gray50",
+         tl.cex=0.5,
+         number.cex=0.5)
+
+```
+
+## Hierarcical Clustering
+```{r}
+d = dist(df_str, method="euclidean")
+```
+
+
+```{r}
+# COmplete, mcquitty, 
+c = hclust(d, method="mcquitty")
+```
+
+
+```{r}
+plot(c)
+#rect.hclust(c, k=4)
+```
+
+Since the data consist of 2240 rows, the graph projected tend to be unclear, therefore, it will be clearer if presented in graph.
+
+In my previous experience, the number of cluster given for marketing segmentation usually consist of 3-6 clusters, since too many cluster tend to makes the marketing decision become harder to approach. 
+```{r}
+cluster3 = as.data.frame(cutree(c, k=3))
+cluster4 = as.data.frame(cutree(c, k=4))
+cluster5 = as.data.frame(cutree(c, k=5))
+cluster6 = as.data.frame(cutree(c, k=6))
+```
+
+
+```{r}
+# Outer Join Dataset
+df_cluster = data.frame(df_dt_cat,df_dt_num_exc,df_im,cluster3,cluster4,cluster5,cluster6)
+head(df_cluster)
+names(df_cluster)
+```
+
+To check whether the cluster formed could create a distinct characteristics, lets create some chart based on several variables that assumed are critical for the characteristics. To do this, lets plot variables for each context. 
+
+1. People     : Income, Recency
+2. Products   : -
+3. Promotions : NumDealsPurchases
+4. Place      : NumWebPurchases
+
+#### People
+##### Income
+```{r}
+boxplot(df_cluster$Income~df_cluster$cutree.c..k...3.)
+```
+
+
+```{r}
+boxplot(df_cluster$Income~df_cluster$cutree.c..k...4.)
+```
+
+
+```{r}
+boxplot(df_cluster$Income~df_cluster$cutree.c..k...5.)
+```
+
+
+```{r}
+boxplot(df_cluster$Income~df_cluster$cutree.c..k...6.)
+```
+
+Accross all the clusters formed, k cluster that represent the best lies in k=4
+
+##### Recency
+```{r}
+boxplot(df_cluster$Recency~df_cluster$cutree.c..k...3.)
+```
+
+
+```{r}
+boxplot(df_cluster$Recency~df_cluster$cutree.c..k...4.)
+```
+
+
+```{r}
+boxplot(df_cluster$Recency~df_cluster$cutree.c..k...5.)
+```
+
+
+```{r}
+boxplot(df_cluster$Recency~df_cluster$cutree.c..k...6.)
+```
+
+Accross all the clusters formed, k cluster that most separable is k=4
+
+#### Promotions
+##### NumDealsPurchases
+```{r}
+boxplot(df_cluster$NumDealsPurchases~df_cluster$cutree.c..k...3.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumDealsPurchases~df_cluster$cutree.c..k...4.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumDealsPurchases~df_cluster$cutree.c..k...5.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumDealsPurchases~df_cluster$cutree.c..k...6.)
+```
+
+#### Place
+##### NumWebPurchases
+```{r}
+boxplot(df_cluster$NumWebPurchases~df_cluster$cutree.c..k...3.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumWebPurchases~df_cluster$cutree.c..k...4.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumWebPurchases~df_cluster$cutree.c..k...5.)
+```
+
+
+```{r}
+boxplot(df_cluster$NumWebPurchases~df_cluster$cutree.c..k...6.)
+str(df_cluster)
+```
+
+From the boxplot of the assumed important variables, the appropriate number of k is 4, since this amount of k can create distinct characteristics better than others (3,5,6).
+
+Write output dataset:
+```{r}
+df_cluster_h = df_cluster[c(-28,-27,-25)]
+write.csv(df_cluster_h,"D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/Pertemuan 10/Tugas/hclustered_marketing_campaign.csv")
+```
+
+# Non Hierarcical Clustering
+
+
+Here, kmeans being used with specifying the random seed, eventhou there is another algorithm called kmeans++ that more suitable for forming clusters. The problem is that there's no approach can be found to implement this algorithm in r, hence kmeans being used with random seed.
+```{r}
+head(df_str)
+set.seed(200)
+kmeans_withinss =
+  function(k){cluster=kmeans(df_str,k) 
+  return (cluster$tot.withinss)}
+
+max_k = 20
+
+wss = sapply(2:max_k, kmeans_withinss)
+
+```
+
+
+```{r}
+elbow = data.frame(2:max_k, wss)
+ggplot(elbow, aes(x=X2.max_k, y=wss))+
+  geom_line()+
+  scale_x_continuous(breaks=seq(1,20,by=1))
+
+```
+This graph Based on this graph, approximately, k=7 is choosen since too much cluster for customer segmentation isn't a good idea and k=7 much less give considerably low score of WSS.
+
+```{r}
+set.seed(200)
+cluster = kmeans(df_str,7)
+```
+
+```{r}
+#cluster$cluster
+cluster_7 = data.frame(cluster$cluster)
+colnames(cluster_7)[1]="k_7"
+```
+
+
+```{r}
+df_cluster_k = data.frame(df_dt_cat,df_dt_num_exc,df_im,cluster_7)
+head(df_dt_num_exc)
+table(df_cluster_k$k_7)
+```
+from this table, the 7 cluster formed has considerably equal amount of cluster with max value within cluster 7 and min value within cluster 6
+
+```{R}
+summary(df_cluster_k)
+```
+
+#### People
+##### Year Birth
+```{r}
+boxplot(df_cluster_k$Year_Birth~df_cluster_k$k_7)
+```
+
+##### Kidhome
+```{r}
+boxplot(df_cluster_k$Kidhome~df_cluster_k$k_7)
+```
+
+##### Teenhome
+```{r}
+boxplot(df_cluster_k$Teenhome~df_cluster_k$k_7)
+```
+
+##### Income
+```{r}
+boxplot(df_cluster_k$Income~df_cluster_k$k_7)
+```
+
+##### Recency
+```{r}
+boxplot(df_cluster_k$Recency~df_cluster_k$k_7)
+```
+
+#### Promotions
+##### NumDealsPurchases
+```{r}
+boxplot(df_cluster_k$NumDealsPurchases~df_cluster_k$k_7)
+```
+#### Place
+##### NumWebPurchases
+```{r}
+boxplot(df_cluster_k$NumWebPurchases~df_cluster_k$k_7)
+```
+
+In terms of separation, boxplot being used for every variables used for making the model.
+
+People Aspect
+
+1. Year birth doesnt give a good separation since every boxplot are overlaping each other with similarities in median for cluster 3,4,5,6. This may caused by imbalance class and the existence of outliers that hasnt gone trought elimination. 
+
+2. Kidhome also overlaping with each other even greatly than year birth, since there should be not a lot variation 
+
+3. Teenhome also has a lot of overlaping boxplot, this stand for the same reason as kidhome
+
+4. Income showing a better separation, but since the outliers wasnt eliminated, causing the boxplot to be slim
+
+5. Recency show a good separation even better than income since there is likely no outlier involved
+
+Promotions Aspect
+
+1. In the promotion, there exist lots of overlaping boxplot, this may be caused by having a small amount of variation
+
+Place Aspect:
+
+1. Number of web purchase showing a good separation of classes
+
+Based on the cluster formed and the separation, lets investigate further the character of each classes in power BI
+
+Write Output Dataset:
+```{r}
+write.csv(df_cluster_k,"D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/Pertemuan 10/Tugas/clustered_marketing_campaign.csv")
+```
+
+## Interpretation of each cluster characteristic
+
+
+```{r}
+head(df_cluster_k)
+
+df_cluster_k %>%
+  group_by(k_7)%>%
+  summarise_at(c("Income","Kidhome","Teenhome","Recency","Year_Birth","NumDealsPurchases","NumWebPurchases"),~mean(.x, na.rm=TRUE))
+```
+
+From the average of each variable used to create clustering model, we get:
+
+#### Cluster 1 
+
+- Has highest rate of income
+
+- Has no kid at home
+
+- has no teen at home
+
+- Quite recently become customer
+
+- in average, born in 1968
+
+- Rarely took any product by discount
+
+- Often buy product from website
+
+In summary it is most likely this cluster consist of customer who already old enough, has great careers, and having childrens who already not living in the same rooftop.
+
+#### Cluster 2 
+
+- Has lowest income
+
+- Most likely have a kid at home
+
+- Has no teen at home
+
+- Quite recently become customer
+
+- In average, born in 1978
+
+- Moderately buy product by discount
+
+- Rarely buy product from website
+
+In summary, this cluster most likely consist of customer who moderately young, still in early of the career, having a kid at home and sometimes buy product by discount.
+
+#### Cluster 3 
+
+- Has considerably high rate of income
+
+- doesnt have kid at home
+
+- has teen at home
+
+- has moderately become customer
+
+- born in around 1964
+
+- moderately buy product by discount
+
+- has the highest frequency of buying product from website
+
+
+In summary, this cluster most likely consist of customer who half aged, has great carrers, having teen at home and mostly buy product from web 
+
+#### Cluster 4 
+
+- Has considerably high income
+
+- Less likely has a kid at home
+
+- Most likely has teen at home
+
+- has very recently become customer
+
+- born in around 1964
+
+- Quite often buy product by discount
+
+- QUite often buy product from web
+
+
+
+In summary, this cluster most likely consist of customer who half aged, has great careers, likely have teen or children or both, enthusiast to buy product from discount nor from web
+
+
+#### Cluster 5 
+
+- Has moderate income
+
+- Has 1 kid at home
+
+- Has 1 teen at home
+
+- Has quite long become customer
+
+- born around 1965
+
+- Quite often buy product by discount
+
+- Moderately buy product from web
+
+
+In summary, this cluster mostly consist of middle aged customer, has good careers, still having kid or teen or both at home, enthusiast to buy product from discount.
+
+
+#### Cluster 6 
+
+- Has considerably high income
+
+- Has no kid at home
+
+- has teen at home
+
+- Longest customer
+
+- born in around 1962
+
+- Moderately buy product by discount
+
+- Quite often buy product from website
+
+
+In summary, this cluster mostly consist of middle to late aged customer, has considerably great careers, having teen at home, and loyal customer who often buy product regarding there is discount or not
+
+
+
+#### Cluster 7
+
+- Has consoderably hogh income
+
+- either having a kid or not at home
+
+- doesnt have teen at home
+
+- has quite long become customer
+
+- born around 1972
+
+- rarely buy product from discount
+
+- quite often buy product from website
+
+
+In summary, this cluster most likely consist of unmerried to early parent, has great careers, loyal customer who often buy product regarding there is discount or not.

@@ -1,0 +1,255 @@
+---
+title: "Employee Attrition"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## About Dataset
+Uncover the factors that lead to employee attrition and explore important questions such as 'show me a breakdown of distance from home by job role and attrition' or 'compare average monthly income by education and attrition'. This is a fictional data set created by IBM data scientists.
+
+**Education** <br><br/>
+1 'Below College',
+2 'College',
+3 'Bachelor',
+4 'Master',
+5 'Doctor'
+
+**EnvironmentSatisfaction** <br><br/>
+1 'Low',
+2 'Medium',
+3 'High',
+4 'Very High'
+
+**JobInvolvement** <br><br/>
+1 'Low',
+2 'Medium',
+3 'High',
+4 'Very High'
+
+**JobSatisfaction** <br><br/>
+1 'Low',
+2 'Medium',
+3 'High',
+4 'Very High'
+
+**PerformanceRating** <br><br/>
+1 'Low',
+2 'Good',
+3 'Excellent',
+4 'Outstanding'
+
+**RelationshipSatisfaction** <br><br/>
+1 'Low',
+2 'Medium',
+3 'High',
+4 'Very High'
+
+**WorkLifeBalance** <br><br/>
+1 'Bad',
+2 'Good',
+3 'Better',
+4 'Best'
+
+
+### Load Dataset
+```{r}
+# Read Dataset
+df_raw = read.csv("D:/Kuliah/Semester 1/Statistika dan Analisis Multivariat/Tugas Besar/WA_Fn-UseC_-HR-Employee-Attrition.csv")
+```
+
+
+### Inspect Dataset
+```{r}
+head(df_raw)
+```
+
+
+```{r}
+str(df_raw)
+```
+
+### Check for Null Value
+```{r}
+lapply(df_raw,function(x) { length(which(is.na(x)))})
+
+df_clean = df_raw
+```
+
+### Drop categorical column
+```{r}
+library(psych)
+
+ints<-sapply(df_clean, is.integer)
+
+df_clean_int = as.data.frame(apply(df_clean[,ints],2,as.numeric))
+df_clean_int = df_clean_int[c(-4,-7,-10, -11, -16, -17, -22)]
+str(df_clean_int)
+```
+
+### Feature Scalling
+```{r}
+#install.packages("conflicted")
+library(conflicted)
+conflict_prefer("apply", "base")
+
+# Create Response Variable as DataFrame
+df_target=as.data.frame(df_clean[c(2)])
+
+# Norm Z function declaration
+normalisasi=function(x){
+  xm=colMeans(x)  
+  jb=dim(x)[1] 
+  xc=x-rep(xm,each=jb) 
+  sdx=apply(x,2,sd) 
+  xstd=xc/rep(sdx,each=jb)
+  output=data.frame(xstd)
+  #output=data.frame(xstd,x)
+  return(output)
+}
+
+
+# Min-Max Norm function declaration
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+
+# Normalization
+#df_norm = normalisasi(df_clean_int)
+df_norm = as.data.frame(lapply(df_clean_int, min_max_norm))
+
+# Outer Join Dataset
+df_norm = data.frame(df_target,df_norm)
+
+# Label encoding for response variable
+df_norm$Attrition = ifelse(df_norm$Attrition=="Yes",1,0)
+df_norm$Attrition = factor(df_norm$Attrition, levels = c(0,1))
+
+summary(df_norm)
+unique(df_norm$Attrition)
+```
+
+### Check Correlation Between Predictor Variables
+```{r}
+#install.packages("corrplot")
+library(psych)
+library(corrplot)
+
+#corPlot(cor(df_norm[(-1)]), cex=0.3, tl.cex=1, xlas=3)
+corrplot(cor(df_norm[c(-1, -5, -13)], df_norm[c(-1, -5, -13)]),
+         method = c("number"), 
+         #bg = "grey10",
+         addgrid.col = "gray50",
+         tl.cex=0.5,
+         number.cex=0.5)
+```
+
+For this correlation plot, there are certain variables that has strong correlation (>0.5), this has to be dropped:
+
+1. TotalWorkingYears
+2. YearsAtCompany
+3. YearsSinceLastPromotion
+4. YearsWithCurentManager
+5. Age
+
+
+### Create Class Balanced Train and test Dataset
+```{r}
+#install.packages("caret")
+library(caret)
+'%ni%' = Negate('%in%')
+options(scipen=999)
+
+set.seed(100)
+str(df_norm)
+
+df_train_test = df_norm[c(-2, -5, -6, -7, -10, -12, -13, -15, -17, -19, -20)]
+head(df_train_test)
+```
+
+
+```{r}
+trainDataIndex= createDataPartition(df_train_test$Attrition, p=0.7, list = F)
+
+trainData = df_train_test[trainDataIndex,]
+testData = df_train_test[-trainDataIndex,]
+
+# Down sample
+set.seed(100)
+down_train=downSample(x=trainData[, colnames(trainData)%ni%"Attrition"], y=trainData$Attrition) 
+table(down_train$Class)
+
+# Up Sample
+set.seed(100)
+up_train = upSample(x = trainData[, colnames(trainData)%ni%"Attrition"], y = trainData$Attrition) 
+table(up_train$Class)
+```
+
+
+### Create Logistic Regression Model
+```{r}
+logitmod = glm(Class~., family = "binomial", data=up_train)
+summary(logitmod)
+```
+
+### Model Validation using Accuracy Metrics
+```{r}
+pred <- predict(logitmod, testData, type = "response")
+
+y_pred_num = ifelse(pred>0.5,1,0)
+y_pred = factor(y_pred_num, levels=c(0,1))
+y_act = testData$Attrition
+
+mean(y_pred==y_act)
+```
+
+
+## LDA Model
+
+### Import Libraries
+```{r}
+library(MASS)
+# install.packages("tidyverse")
+library(tidyverse)
+library(caret)
+theme_set(theme_classic())
+```
+
+### Pre-processing Transformation
+
+Center: substracts the mean of the predictor's data (again from the data in x) from the predictor values<br><br/>
+Scale: divides by standard deviation
+```{r}
+preproc.parameter <- trainData %>%
+  preProcess(method = c("center","scale"))
+```
+
+### Transform Train and Test Dataset
+```{r}
+train.transform <- preproc.parameter %>% predict(trainData)
+test.transform <- preproc.parameter %>% predict(testData)
+```
+
+### Create LDA Model
+```{r}
+model <- lda(Attrition~., data = train.transform)
+```
+
+### Create Prediction from Test Dataset
+```{r}
+predictions <- model %>% predict(test.transform)
+```
+
+### Calculate Model Accuracy
+```{r}
+mean(predictions$class==test.transform$Attrition)
+```
+
+### LDA Model Summary
+```{r}
+model <- lda(Attrition~., data = train.transform)
+model
+```
+

@@ -1,0 +1,350 @@
+---
+title: "Data Visualisation and Analytics using Linear Regression"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Dataset Description
+
+This data contain houses listing in Melbroune. The data was scrapped from publicly available result posted every week from Domain.com.au. There are several key details about the data including:
+
+- Suburb: Suburb
+
+- Address: Address
+
+- Rooms: Number of rooms
+
+- Price: Price in Australian dollars
+
+- Method:
+  -   S - property sold;
+  -   SP - property sold prior;
+  -   PI - property passed in;
+  -   PN - sold prior not disclosed;
+  -   SN - sold not disclosed;
+  -   NB - no bid;
+  -   VB - vendor bid;
+  -   W - withdrawn prior to auction;
+  -   SA - sold after auction;
+  -   SS - sold after auction price not disclosed.
+  -   N/A - price or highest bid not available.
+<br><br/>
+
+- Type:
+  -   br - bedroom(s);
+  -   h - house,cottage,villa, semi,terrace;
+  -   u - unit, duplex;
+  -   t - townhouse;
+  -   dev site - development site;
+  -   o res - other residential.
+<br><br/>
+
+- SellerG: Real Estate Agent
+
+- Date: Date sold
+
+- Distance: Distance from CBD in Kilometres
+
+- Regionname: General Region (West, North West, North, North east .etc)
+
+- Propertycount: Number of properties that exist in the suburb.
+
+- Bedroom2: Scraped - of Bedrooms (from different source)
+
+- Bathroom: Number of Bathrooms
+
+- Car: Number of carspots
+
+- Landsize: Land Size in Metres
+
+- BuildingArea: Building Size in Metres
+
+- YearBuilt: Year the house was built
+
+- CouncilArea: Governing council for the area
+
+- Lattitude: Self explanitory
+
+- Longtitude: Self explanitory
+
+
+## Step: <br><br/>
+1. Load dataset and data preprocessing <br><br/>
+- Drop rows which contain NA <br><br/>
+2. Fiiter the data by method = S and Propertycount below average <br><br/>
+3. Split the date into day, month, and year <br><br/>
+4. Group by regionname and year and calculate the means <br><br/>
+5. Count average growth for each region (YoY) <br><br/>
+6. Visualize the mean price YoY <br><br/>
+7. Selecting the region based on average growth <br><br/>
+8. Selecting only the parametric feature <br><br/>
+9. Create train and test dataset <br><br/>
+10. Create linear regression model <br><br/>
+11. Test model and measure its accuracy <br><br/>
+
+## Goal:
+Create linear regression model to predict house price in region that has largest potencial in terms of price growth
+
+
+### Load Dataset and Data Preprocessing
+```{r}
+# Read Dataset
+df_raw = read.csv("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/Pertemuan 6/Tugas/Melbourne_housing_FULL.csv", sep=';')
+str(df_raw)
+```
+
+Propertycount and BuildingArea were missidentified as character, so we need to transform it to numeric variable
+<br><br/>
+Source of method: 
+<br><br/>
+- <https://statisticsglobe.com/convert-data-frame-column-to-numeric-in-r> 
+<br><br/>
+- <https://www.statmethods.net/input/dates.html>
+```{r}
+df_dt = df_raw
+i = c(15,21) 
+df_dt[,i] = apply(df_dt[,i],2,function(x) as.numeric(as.character(x)))
+sapply(df_dt, class)
+
+df_dt$DateFormat = as.Date(df_dt$Date, format="%d/%m/%Y")
+df_dt$Year = as.numeric(format(df_dt$DateFormat, format="%Y"))
+df_dt$Month = as.numeric(format(df_dt$DateFormat, format="%m"))
+df_dt$Day = as.numeric(format(df_dt$DateFormat, format="%d"))
+
+df_dt_fe = df_dt
+str(df_dt_fe)
+```
+
+## Descriptive Statistics
+```{r}
+summary(df_dt_fe)
+```
+
+### Filter data
+Filter the data for method = S and type = h or t
+```{r}
+#df_dt_fe = subset(df_dt_fe, df_dt_fe$Method=='S')
+df_dt_fe = subset(df_dt_fe, df_dt_fe$Type=='h'|df_dt_fe$Type=='t')
+#head(df_dt_fe)
+```
+
+
+### Visualizing mean house price sold per region name  
+```{r}
+library(dplyr)
+library(lattice)
+
+df_dt_fe_fil <- 
+  df_dt_fe %>%
+  select(DateFormat,Price,Regionname,Propertycount)%>%
+  na.omit()%>%
+  group_by(DateFormat, Regionname) %>%
+  summarise(Meanprice = mean(Price),
+            MeanProperty = mean(Propertycount),
+            .groups='drop') %>%
+  xyplot(x=Meanprice ~ DateFormat|Regionname, type='l', scales=list(alternating=FALSE, tck=1:0, xlab=2))
+
+df_dt_fe_fil
+
+```
+<br><br/>
+From this chart, I can confiedently choose Southern Metropolitan which has high sold price and relatively stable that show increase in trend at a glance
+
+### Filter data
+Filter the data for Regionname = Southern Metropolitan
+```{r}
+df_dt_fe = subset(df_dt_fe, df_dt_fe$Regionname=='Southern Metropolitan')
+#head(df_dt_fe)
+count(df_dt_fe)
+```
+
+### Check null values
+```{r}
+lapply(df_dt_fe,function(x) { length(which(is.na(x)))})
+unique(df_dt_fe$Suburb)
+
+df_dt_fe_na = na.omit(df_dt_fe)
+count(df_dt_fe_na)
+
+lapply(df_dt_fe_na,function(x) { length(which(is.na(x)))})
+```
+
+
+### Data Visualisation
+```{r}
+histogram(~Price, data=subset(df_dt_fe_na, df_dt_fe_na$Type=='t'), main="Histogram of House Price in Type Townhouse")
+```
+<br><br/>
+The majority of townhouse price in Southern Metropolitan is in range of approximately AUD 600.000 to AUD 1.400.000
+
+### Data Visualisation
+```{r}
+histogram(~Price, data=subset(df_dt_fe_na, df_dt_fe_na$Type=='h'), main="Histogram of House Price in Type House, Cottage, Villa, Semi, and Terrace")
+```
+<br><br/>
+The majority of House, Cottage, Villa, Semi, and Terrace price in Southern Metropolitan is in range of approximately AUD 1.000.000 to AUD 2.000.000
+
+
+
+### Drop Char Column
+```{r}
+names(df_dt_fe_na)
+df_dt_fe_na_dc = df_dt_fe_na[c(-1, -2, -4, -6, -7, -8, -10, -17, -18, -19, -20,-22, -23, -24, -25)]
+str(df_dt_fe_na_dc)
+```
+
+```{r}
+#install.packages("psych")
+library(psych)
+
+str(df_dt_fe_na_dc)
+
+chars<-sapply(df_dt_fe_na_dc, is.character)
+#chars
+
+ints<-sapply(df_dt_fe_na_dc, is.integer)
+#ints
+
+df_dt_fe_na_dc$Distance = as.numeric(df_dt_fe_na_dc$Distance)
+df_dt_fe_na_dc_int = as.data.frame(apply(df_dt_fe_na_dc[,ints],2,as.numeric))
+
+df_dt_fe_na_dc=df_dt_fe_na_dc[c(3,8,10)]
+df_dt_fe_na_dc = data.frame(df_dt_fe_na_dc,df_dt_fe_na_dc_int)
+
+corPlot(df_dt_fe_na_dc, cex=0.3, xlas=2)
+```
+<br><br/>
+From this correlation plot, we want to know which variables are have correlation with Price. Given the table above, we can see moderate correlation of price by Rooms, Bedroom2, so the next step is to visualize the correlation
+
+```{r}
+plot(Price~BuildingArea, data=df_dt_fe_na_dc)
+```
+<br><br/>
+In this plot, there's a noticable positive correlation even thou the correlation were < 0.5. Therefore, we'll try to create linear regression prediction based on this correlation.
+
+```{r}
+plot(Price~Rooms, data=df_dt_fe_na_dc)
+```
+<br><br/>
+In this plot, there's a noticable positive correlation but with large variation in each Rooms value. Therefore, we'll try to create linear regression prediction based on this correlation.
+
+```{r}
+plot(Price~Bedroom2, data=df_dt_fe_na_dc)
+```
+<br><br/>
+In this plot, there's also a noticable positive correlation but with large variation in each Bedroom2 value. Therefore, we'll try to create linear regression prediction based on this correlation also.
+
+```{r}
+plot(Rooms~Bedroom2, data=df_dt_fe_na_dc)
+```
+<br><br/>
+Next, we investigate whether for each independent variables exist correlation. From the correlation value and scatter plote above, there is strong correlation between Rooms and Bedroom2, so we wouldn't use multinomial linear regression.
+
+```{r}
+names(df_dt_fe_na_dc)
+df_input_lr = df_dt_fe_na_dc[c(2,4,5,6)]
+head(df_input_lr)
+```
+
+
+### Create train and test dataset
+```{r}
+# Set index dan proporsi data training dan test
+index = 1:nrow(df_input_lr)
+testindex = sample(index, 0.2*length(index)) # Proporsi test dataframe sebesar 20%, dan train dataset 80%
+
+# Membuat data train dan test berdasarkan index
+testset = df_input_lr[testindex,]
+trainset = df_input_lr[-testindex,]
+
+# Perbandingan jumlah baris dataframe 
+nrow(df_input_lr)
+nrow(testset)
+nrow(trainset)
+```
+
+
+### Feature Scalling
+```{r}
+#install.packages("conflicted")
+#library(conflicted)
+#conflict_prefer("apply", "base")
+
+#Deklarasi untuk fungsi normalisasi z
+normalisasi=function(x){
+  xm=colMeans(x) # Mencari means per kolom 
+  jb=dim(x)[1] # untuk kolom 1 dimensi ada berapa
+  xc=x-rep(xm,each=jb) #rep = repetition (mengulang, ), xm = rata-rata
+  sdx=apply(x,2,sd) # mencari standar deviasi
+  xstd=xc/rep(sdx,each=jb) # x nya dibagi standar deviasi
+  output=data.frame(xstd)
+  #output=data.frame(xstd,x)
+  return(output)
+}
+
+# Normalisasi
+#df_input_mlr = normalisasi(df_input_lr)  
+#head(df_input_mlr)
+```
+
+
+### Linear Regression Applied
+```{r}
+# Create Bivariate Linear Regression
+regressionModel1 = lm(formula=Price~BuildingArea, data=trainset)
+#View(regressionModel1)
+summary(regressionModel1)
+```
+
+
+```{r}
+# Create Bivariate Linear Regression
+regressionModel2 = lm(formula=Price~Rooms, data=trainset)
+#View(regressionModel1)
+summary(regressionModel2)
+```
+
+
+```{r}
+regressionModel3 = lm(formula=Price~Bedroom2, data=trainset)
+#View(regressionModel2)
+summary(regressionModel3)
+```
+
+```{r}
+head(testset)
+```
+
+
+```{r}
+predict(regressionModel1, head(testset))
+```
+
+
+```{r}
+predict(regressionModel2, head(testset))
+```
+
+
+```{r}
+predict(regressionModel3, head(testset))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

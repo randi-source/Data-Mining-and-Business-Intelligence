@@ -1,0 +1,255 @@
+---
+title: "Soal 3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Pertanyaan
+#### 3a.	Lakukan analisis dengan teknik yang sudah dipelajari
+Analisis data dilakukan dengan menerapkan binary classification untuk memprediksi Credit Risk (Low atau High) menggunakan model logistic regression <br><br/>
+
+#### 3b. Jelaskan mengapa teknik tersebut yang anda pakai 
+Model logistic regression digunakan karena model ini adalah salah satu model yang secara alami ditujukan untuk penyelesaian kasus binary classification, dimana prediksi hanya berisikan dua class. <br><br/>
+
+- Model ini mudah untuk diimplementasikan, diinterpretasi, serta sangat efisien untuk melatih model. <br><br/>
+- Model ini tidak memiliki asumsi terkait distribusi class di feature space. <br><br/>
+- Model ini memberikan arah asosiasi dengan variabel respon (positif atau negatif).<br><br/>
+- Model ini cepat untuk mengklasifikasikan record baru.<br><br/>
+- Model ini baik untuk memprediksi ketika data dapat dipisahkan secara linier.<br><br/>
+- Koefisien model dapat digunakan sebagai indikator feature importance.<br><br/>
+- Model ini cenderung kecil kemungkinan untuk overfitting, namun pada dimensi data yang tinggi, mungkin perlu digunakan regularisasi untuk menghindari overfitting.
+<br><br/>
+
+Sumber: <https://www.geeksforgeeks.org/advantages-and-disadvantages-of-logistic-regression/>
+
+#### 3c. Apakah Anda perlu menggunakan Pre Processing? Jika YA jelaskan PreProcessing apa yang Anda perlukan
+Preprocessing yang digunakan dalam membuat model adalah 
+
+a. Cek null values
+b. Drop kolom data yang kategorikal (nominal dan ordinal)
+c. Feature scaling dengan min-max scalling skala 0-1 
+d. Menyeleksi feature dengan melihat korelasi antara variabel prediktor 
+e. Membagi data ke train dan test dataset 
+f. Membuat train dataset memiliki kelas yang seimbang dengan up sample 
+
+#### 3d.	Hasil apa yang bisa Anda dapatkan dari data yang sudah diolah dan berikan penjelasan apa manfaatnya terkait pengambilan keputusan 
+Dengan hanya mengandalkan metric accuracy, saya mendapat nilai accuracy sebesar 0,5952381. Dengan membuat model prediksi credit risk, maka penyedia jasa kredit memiliki sistem pendukung keputusan untuk menerima atau menolak pengajuan kredit. Namun dengan hasil accuracy model yang relatif rendah ini maka masih dibutuhkan proses lebih lanjut untuk membuat model yang layak untuk membantu pengambilan keputusan. Cara yang dapat digunakan meliputi:
+
+- Eliminasi outlier dengan capping dan flooring
+- Menggunakan cross validation
+- Menggunakan teknik regularisasi (L1 dan L2)
+- Menggunakan model binary classification lainnya
+
+
+
+
+```{r}
+#install.packages("readxl")
+library(readxl)
+df_raw = read_excel("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/UTS/Credit Risk Data.xlsx", sheet="Base Data", skip=2)
+df_test_pred_model_raw = read_excel("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/UTS/Credit Risk Data.xlsx", sheet="Additional Data")
+head(df_raw)
+head(df_test_pred_model_raw)
+```
+
+
+
+```{r}
+str(df_raw)
+```
+From the dataset above, tht columns with character type will be dropped since it represent nominal datatype, but keepiing the credit risk for response variable
+
+## Summary Statistics
+```{r}
+summary(df_raw)
+```
+
+### Check for Null Value
+```{r}
+lapply(df_raw,function(x) { length(which(is.na(x)))})
+
+df_clean = df_raw
+```
+
+### Drop categorical (nominal and ordinal) columns
+```{r}
+#library(psych)
+
+#ints<-sapply(df_clean, is.integer)
+
+#df_clean_int = as.data.frame(apply(df_clean[,ints],2,as.numeric))
+df_clean_num = df_clean[, sapply(df_clean, is.numeric)]
+#str(df_clean_num)
+#df_clean_num = df_clean_num[c(-3, -4, -7, -8, -11, -14, -19)]
+str(df_clean_num)
+```
+
+### Feature Scalling
+```{r}
+#install.packages("conflicted")
+library(conflicted)
+conflict_prefer("apply", "base")
+
+# Create Response Variable as DataFrame
+df_target=as.data.frame(df_clean[c(12)])
+
+# Norm Z function declaration
+normalisasi=function(x){
+  xm=colMeans(x)  
+  jb=dim(x)[1] 
+  xc=x-rep(xm,each=jb) 
+  sdx=apply(x,2,sd) 
+  xstd=xc/rep(sdx,each=jb)
+  output=data.frame(xstd)
+  #output=data.frame(xstd,x)
+  return(output)
+}
+
+
+# Min-Max Norm function declaration
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+
+# Normalization
+#df_norm = normalisasi(df_clean_num)
+df_norm = as.data.frame(lapply(df_clean_num, min_max_norm))
+
+# Outer Join Dataset
+df_norm = data.frame(df_target,df_norm)
+
+# Label encoding for response variable
+df_norm$Credit.Risk = ifelse(df_norm$Credit.Risk=="High",1,0)
+df_norm$Credit.Risk = factor(df_norm$Credit.Risk, levels = c(0,1))
+#df_norm
+#head(df_norm)
+#str(df_norm)
+#unique(df_norm$Attrition)
+```
+
+```{r}
+#install.packages("corrplot")
+library(psych)
+library(corrplot)
+
+#corPlot(cor(df_norm[(-1)]), cex=0.3, tl.cex=1, xlas=3)
+corrplot(cor(df_norm[(-1)], df_norm[(-1)]),
+         method = c("number"), 
+         #bg = "grey10",
+         addgrid.col = "gray50",
+         tl.cex=0.5,
+         number.cex=0.5)
+```
+<br><br/>
+from this correlation graph, we knew that there are no stong correlation (>0.5), therefore there is no need for feature selection
+
+
+### Create Class Balanced Train and test Dataset
+```{r}
+#install.packages("caret")
+library(caret)
+'%ni%' = Negate('%in%')
+options(scipen=999)
+
+set.seed(100)
+str(df_norm)
+
+df_train_test= df_norm
+```
+
+
+```{r}
+trainDataIndex= createDataPartition(df_train_test$Credit.Risk, p=0.8, list = F)
+
+trainData = df_train_test[trainDataIndex,]
+testData = df_train_test[-trainDataIndex,]
+
+# Down sample
+set.seed(100)
+down_train=downSample(x=trainData[, colnames(trainData)%ni%"Credit.Risk"], y=trainData$Credit.Risk) 
+#table(down_train$Class)
+
+# Up Sample
+set.seed(100)
+up_train = upSample(x = trainData[, colnames(trainData)%ni%"Credit.Risk"], y = trainData$Credit.Risk) 
+table(up_train$Class)
+```
+
+
+### Create Logistic Regression Model
+```{r}
+logitmod = glm(Class~., family = "binomial", data=up_train)
+summary(logitmod)
+```
+
+### Model Validation using Accuracy Metrics
+```{r}
+pred <- predict(logitmod, testData, type = "response")
+
+y_pred_num = ifelse(pred>0.5,1,0)
+y_pred = factor(y_pred_num, levels=c(0,1))
+y_act = testData$Credit.Risk
+
+mean(y_pred==y_act)
+```
+
+## Feature Selection Based On P-value
+### Create Class Balanced Train and test Dataset
+```{r}
+#install.packages("caret")
+library(caret)
+'%ni%' = Negate('%in%')
+options(scipen=999)
+
+set.seed(100)
+str(df_norm)
+
+df_train_test= df_norm[c(-2, -3, -6, -7)]
+```
+
+
+```{r}
+trainDataIndex= createDataPartition(df_train_test$Credit.Risk, p=0.8, list = F)
+
+trainData = df_train_test[trainDataIndex,]
+testData = df_train_test[-trainDataIndex,]
+
+# Down sample
+set.seed(100)
+down_train=downSample(x=trainData[, colnames(trainData)%ni%"Credit.Risk"], y=trainData$Credit.Risk) 
+#table(down_train$Class)
+
+# Up Sample
+set.seed(100)
+up_train = upSample(x = trainData[, colnames(trainData)%ni%"Credit.Risk"], y = trainData$Credit.Risk) 
+table(up_train$Class)
+```
+
+
+### Create Logistic Regression Model
+```{r}
+logitmod = glm(Class~., family = "binomial", data=up_train)
+summary(logitmod)
+```
+
+### Model Validation using Accuracy Metrics
+```{r}
+pred <- predict(logitmod, testData, type = "response")
+
+y_pred_num = ifelse(pred>0.5,1,0)
+y_pred = factor(y_pred_num, levels=c(0,1))
+y_act = testData$Credit.Risk
+
+mean(y_pred==y_act)
+```
+
+```{r}
+#library(dplyr)
+#head(df_test_pred_model_raw)
+#df_test_pred_model = df_test_pred_model_raw %>%
+```
+
+

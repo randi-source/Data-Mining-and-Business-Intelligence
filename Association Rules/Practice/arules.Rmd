@@ -1,0 +1,173 @@
+---
+title: "Apriori"
+output: html_document
+---
+# Apriori Analysis
+
+The dataset for this competition is a relational set of files describing customers' orders over time. The goal of the competition is to predict which products will be in a user's next order. The dataset is anonymized and contains a sample of over 3 million grocery orders from more than 200,000 Instacart users. For each user, we provide between 4 and 100 of their orders, with the sequence of products purchased in each order. We also provide the week and hour of day the order was placed, and a relative measure of time between orders. For more information, see the blog post accompanying its public release.
+
+## File descriptions
+
+Each entity (customer, product, order, aisle, etc.) has an associated unique id. Most of the files and variable names should be self-explanatory.
+
+source: <https://www.kaggle.com/code/shubhendra7/market-basket-analysis-r-language/data>
+
+
+```{R}
+#install.packages("IRdisplay")
+library(dplyr)
+library(tidyverse)
+library(data.table)
+library(arules)
+library(arulesViz)
+library(plotly)
+library(IRdisplay)
+```
+
+## Install SparkR
+
+Since the analysis itself considered brief, there may be better approach to create association rules with sparkR. This approach enhance the computing capabilities by enabling distributed processing across clusters, but in this example lets try using single cluster.The dataset also contain large amount of data around 32 Million, this is another reason to utilize spark in r. 
+
+The spark version used is spark 3.2.2 and hadoop 3.2 for the distributed file repository.
+
+source : 
+<https://sbartek.github.io/sparkRInstall/installSparkReasyWay.html>
+<https://github.com/cdarlint/winutils/blob/master/hadoop-3.2.2/bin/winutils.exe>
+
+
+```{r}
+#library(dplyr)
+#install.packages('sparklyr', '1.6.3')
+#packageurl = "https://cran.r-project.org/src/contrib/Archive/sparklyr/sparklyr_1.6.2.tar.gz"
+#install.packages("sparklyr")
+#packageVersion("sparklyr")
+#library(sparklyr)
+#spark_install("3.2")
+#spark_available_versions()
+#spark_installed_versions()
+#spark_uninstall(version="2.4.3", hadoop="2.7")
+#options(sparklyr.log.console=TRUE)
+#sc = spark_connect(master="local", version="3.2.2")
+
+#library(SparkR, lib.loc = c(file.path(Sys.getenv("SPARK_HOME"), "R", "lib")))
+#sparkR.session(master = "local[*]", sparkConfig = list(spark.driver.memory = "3g"))
+
+#sparkR.stop()
+```
+
+## Read Dataset
+
+source:<https://spark.apache.org/docs/2.1.0/api/R/read.df.html>
+```{r}
+#schema_products = structType(structField("product_id","string"),
+#                             structField("product_name","string"),
+#                             structField("aisle_id", "string"),
+#                             structField("department_id", "string")) 
+
+#df_products = read.df(path="D:/Kuliah/semester_1/data_mining_and_business_intelligence/pertemuan_11/tugas/products.csv", source="csv", schema=schema_products, header=TRUE)
+
+#head(df_products)
+
+#schema_orders = structType(structField("order_id","string"),
+#                           structField("product_id","string"),
+#                           structField("add_to_cart_order","string"),
+#                           structField("reordered","string"))
+
+#df_orders = read.df(path="D:/Kuliah/semester_1/data_mining_and_business_intelligence/pertemuan_11/tugas/order_products__prior.csv", #source="csv",schema=schema_orders, header=TRUE, delimiter=";")
+
+#head(df_orders)
+
+df_products_ns = read.csv("D:/Kuliah/semester_1/data_mining_and_business_intelligence/pertemuan_11/tugas/products.csv")
+#str(df_products_ns)
+
+df_order_ns = read.csv("D:/Kuliah/semester_1/data_mining_and_business_intelligence/pertemuan_11/tugas/order_products__prior.csv")
+#str(df_order_ns)
+```
+
+## Parallel Apriori Algorithm in SPARK
+source: 
+
+<https://www.itm-conferences.org/articles/itmconf/pdf/2021/05/itmconf_icacc2021_03046.pdf>
+<https://spark.apache.org/docs/3.2.2/sparkr.html#starting-up-sparksession>
+<https://spark.apache.org/docs/1.5.0/api/R/select.html>
+<https://spark.apache.org/docs/1.6.0/api/R/groupBy.html>
+```{r}
+# Register this SparkDataFrame as a temporary view.
+#createOrReplaceTempView(df_orders, "df_orders")
+# Register this SparkDataFrame as a temporary view.
+#createOrReplaceTempView(df_products, "df_products")
+
+basket_data = merge(df_order_ns, df_products_ns, by = "product_id")
+
+#head(basket_data)
+
+
+#basket_data = df_orders %>%
+#  merge(df_products, by.x="product_id", by.y="product_id", all.x=TRUE)%>%
+#  selectExpr("order_id","product_name")%>%
+#  collect()
+  
+
+basket_input = split(basket_data$product_name,basket_data$order_id)
+```
+
+# Spark
+```{r}
+#df <- selectExpr(createDataFrame(data.frame(rawItems = c("1,2,5", "1,2,3,5", "1,2"))), "split(rawItems, ',') AS items")
+
+#head(df)
+
+#fpm <- spark.fpGrowth(df, itemsCol="items", minSupport=0.5, minConfidence=0.6)
+
+#spark.freqItemsets(fpm)
+
+#spark.associationRules(fpm)
+
+#predict(fpm, df)
+
+#sparkR.stop()
+```
+
+Unfortunately, since spark R doesnt have method to convert dataframe to list / vector, here afterwards, the analysis stick with R only.
+
+```{r}
+transactions=as(basket_input, 'transactions')
+head(transactions)
+```
+
+```{r}
+length(transactions)
+```
+
+```{r}
+myrules=apriori(transactions, list(support=0.00075, confidence=0.5, maxlen= 5))
+
+```
+
+```{r}
+summary(myrules)
+```
+
+```{r}
+inspect(myrules[1:7])
+
+```
+
+```{r}
+plot(myrules, jitter=0)
+```
+
+```{r}
+plot(myrules, method="grouped", control=list(k=7))
+```
+
+```{r}
+plot(myrules[1:7], method="graph")
+
+```
+
+```{r}
+plot(myrules[1:7], method="paracoord")
+
+```
+

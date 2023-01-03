@@ -1,0 +1,180 @@
+---
+title: "data scrapping"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install Libraries
+```{r}
+#install.packages("rtweet")
+#install.packages("tidytext")
+#install.packages("ggraph")
+```
+
+# Text Preprocessing
+
+## Call Libraries and Autentication Setup
+```{r}
+library(rtweet)
+library(ggplot2)
+library(dplyr)
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+auth_setup_default()
+
+```
+
+## Scrapping Twitter
+```{r}
+#mlops_tweets = search_tweets(q="#mlops",n=20000, lang="en", include_rts=FALSE)
+
+#head(mlops_tweets)
+```
+
+
+
+### Source of Topics
+
+Future Today Institute: <https://futuretodayinstitute.com/trends/>
+```{r}
+mlops_tweets = search_tweets(q="AWS", n=10000, lang="en",include_rts=FALSE)
+
+head(mlops_tweets)
+```
+
+
+```{r}
+# mlops_mlops_2 = search_tweets(q="mlopsmlops",n=10000, lang="en", include_rts=FALSE)
+
+#head(mlops_mlops_2)
+
+```
+
+## Cek Emoji
+```{r}
+head(mlops_tweets$text)
+```
+from inspecting the mlops_tweets dataset, there are no emoji appeared as emoji, as it can be seen below that the emoji may be encoded as set of characters in tweets index 4 and 6
+
+## Eliminate URL in text
+```{r}
+mlops_tweets$stripped_text = gsub("http[^[:space:]]*","", mlops_tweets$text)
+
+mlops_tweets$stripped_text = gsub("https[^[:space:]]*","", mlops_tweets$stripped_text)
+
+mlops_tweets$stripped_text = gsub("[^[:alpha:][:space:]]*","", mlops_tweets$stripped_text)
+
+head(mlops_tweets$stripped_text, n=10)
+```
+
+## CASE-FOLDING
+```{r}
+mlops_tweets_clean = mlops_tweets %>%
+  dplyr::select(stripped_text) %>%
+  unnest_tokens(word, stripped_text)
+
+tail(mlops_tweets_clean, n=20)
+
+```
+from the looks of the transformation, the stripped_text column just got transformed in terms of:
+
+- Changing uppercase to lowercase
+- Eliminate punctuation
+- Parse words into word and convert to rows
+
+## Tokenizing
+```{r}
+mlops_tweets_clean %>% 
+  count(word, sort=TRUE) %>%
+  top_n(15)%>%
+  mutate(word=reorder(word,n))%>%
+  ggplot(aes(x=word, y=n))+geom_col()+xlab(NULL)+coord_flip()+labs(x="Count",y="Unique words",title="Count of Unique Words Found in Tweets")
+```
+
+In the case folding case, it seems that the data already tokenized, so here it assumed as the graphical representation.
+
+## Stop Word Removal
+
+Meaning of lexicon: <https://www.vocabulary.com/dictionary/lexicon>
+Lexicon contained in this dataset: <https://juliasilge.github.io/tidytext/reference/stop_words.html>
+```{r}
+data("stop_words")
+
+head(stop_words)
+
+nrow(mlops_tweets_clean)
+
+cleaned_tweet_words = mlops_tweets_clean %>%
+  anti_join(stop_words) # is antijoin function is to eliminate similar data between 2 dataset?
+
+nrow(cleaned_tweet_words)
+```
+
+
+```{r}
+cleaned_tweet_words %>%
+  count(word, sort=TRUE) %>%
+  top_n(15)%>%
+  mutate(word=reorder(word,n))%>%
+  ggplot(aes(x=word,y=n))+
+  geom_col()+
+  xlab(NULL)+
+  coord_flip()+
+  labs(y="Count",x="Unique words",
+       title="Count of Unique Words Found in Tweets",
+       subtitle="Stop Words Removed from the List")
+  
+
+```
+
+## N-Gramming
+
+```{r}
+#install.packages("widyr")
+library(widyr)
+
+mlops_tweets_paired_words = mlops_tweets %>%
+  dplyr::select(stripped_text)%>%
+  unnest_tokens(paired_words, stripped_text,token="ngrams",n=2)
+
+mlops_tweets_paired_words%>%
+  count(paired_words, sort=TRUE)
+
+mlops_tweets_separated_words <- mlops_tweets_paired_words %>% 
+  tidyr::separate(paired_words,c("word1","word2"),sep=" ") 
+
+mlops_tweets_filtered <- mlops_tweets_separated_words  %>% 
+  filter(!word1%in%stop_words$word) %>% 
+  filter(!word2%in%stop_words$word)
+  
+mlops_words_counts <- mlops_tweets_filtered  %>% 
+  count(word1,word2,sort=TRUE) 
+  
+head(mlops_tweets_separated_words)
+```
+
+## Interpretasi
+```{r}
+mlops_words_counts  %>%
+  filter(n>=5) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout="fr") +
+  geom_edge_link(aes(width = n, edge_alpha = n), show.legend = FALSE,edge_colour = "white")+
+  geom_node_point(color="darkslategray4",size=3)+
+  geom_node_text(aes(label=name),vjust=1.8,size=3)+
+  labs(title="Word Network: Tweets using the hashtag-mlops",
+  subtitle="Text mining twitter data",
+  x="",y="")
+
+```
+
+MLOps itself is the approach to bring management aspect to the deployment of machine learning in business process. It usually used to bring collaboration, deployment, and manage lifecycle of machine learning model. There is interest to oversee the scope of the implementation in terms of business so the keyword used is mlops+business. This result displayed as Word Network graph which show the relation between words and the frequencies it appears (for each combination of 2 words). Here the minimum frequency is set to 5. 
+
+The result show that mlops likely have strong relationship with space and IoT directly since the implementation itself may leverage result yielded in IoT and Space field by making model more robust and relevant to the current environment. In terms of business, there is fintech which indirectly related to mlops so it may be assumed that financial technology industries is the closest business that utilize MLOps approach that may be true for cases such as churn prediction, credit risk analysis, etc. 
+
+The unrelevant information involved is like fifa and qatar since after brief inspection, it comes from the hashtags used in the post that most likely used to leverage the topics eventhou it wasn't relevant.

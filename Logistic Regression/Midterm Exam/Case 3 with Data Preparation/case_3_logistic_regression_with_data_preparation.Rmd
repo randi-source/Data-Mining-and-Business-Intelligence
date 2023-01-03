@@ -1,0 +1,218 @@
+---
+title: "Soal 4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Supaya data dapat dianalisis
+
+1. Menelaah data untuk melihat potensi analisis yang bisa dilakukan dan bermanfaat
+2. Load data ke r, jika ada masalah dalam load data, cek file dengan aplikasi microsoft excel
+3. Menyesuaikan tipe data
+4. cek nilai null di setiap kolom
+5. membuang data null
+6. cek statistik deskriptif nya
+7. Melakukan visualisasi untuk mendasari analisis yang akan dilakukan
+8. Mempersiapkan data sesuai hasil eksplorasi dengan melihat nilai statistik deskriptif dan visualisasi yang dibuat 
+9. Mempersiapkan data sesuai dengan ketentuan algoritma yang hendak digunakan
+10. Membuat model dengan data yang sudah dipersiapkan
+11. Menguji kemampuan model yang dibuat 
+
+Khusus untuk analisis yang akan digunakan dalam dunia nyata, ada step tambahan
+
+12. Membuat model dapat digunakan untuk memprediksi data baru
+13. Memonitor performa model dari waktu ke waktu
+14. Jika terjadi data drifting hingga threshold metrics tidak baik lagi, maka melakukan pembuatan model baru
+
+## Read Dataset
+```{r}
+#setwd("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/UTS/")  
+library(readxl)
+df_raw = read_excel("D:/Kuliah/Semester 1/Data Mining dan Business Intelligence/UTS/DataCredit (1).xlsx")
+```
+
+## Inspect Dataset
+```{r}
+head(df_raw)
+```
+
+```{r}
+lapply(df_raw,function(x) { length(which(is.na(x)))})
+```
+
+```{r}
+df_clean = as.data.frame(na.omit(df_raw))
+lapply(df_clean,function(x) { length(which(is.na(x)))})
+
+df_clean = df_clean[c(-1)]
+```
+
+```{r}
+str(df_clean)
+```
+
+
+```{r}
+summary(df_clean)
+```
+From the summary statistic, there are several things that pick up interest
+1. Age have negative value
+2. Age value is in float format, maybe because its today-datebirth withoud rounding the value
+
+
+```{r}
+length(unique(df_clean$clientid))
+```
+
+```{r}
+boxplot(income~default, data=df_clean)
+```
+
+
+
+
+```{r}
+boxplot(age~default, data=df_clean)
+```
+
+```{r}
+boxplot(loan~default, data=df_clean)
+```
+From the boxplot above, there's outlier in age and loan of default=0, so next thing to do is drop age that is outlier
+
+## Data Preprocessing
+```{r}
+df_out = subset(df_clean, df_clean$age>=0)
+boxplot(age~default, data=df_out)
+```
+
+for the outlier in loan of default=0, let's create histogram
+
+```{r}
+library(lattice)
+histogram(~loan, data=subset(df_out, df_out$default==0))
+```
+From the histogram, we knew that the outlier value is accounted for a small portion of the data, therefore it can be dropped
+
+```{r}
+df_out = subset(df_out, df_out$loan<=11500)
+boxplot(loan~default, data=df_out)
+```
+After take out the outlier, we can see that roughtly, between default = 0 and default = 1, there are different in age and loan, but roughly the same for the the income. Next, we inspect the correlation within predictor variables
+
+```{r}
+#install.packages("corrplot")
+library(psych)
+library(corrplot)
+
+#corPlot(cor(df_norm[(-1)]), cex=0.3, tl.cex=1, xlas=3)
+corrplot(cor(df_out[(-4)], df_out[(-4)]),
+         method = c("number"), 
+         #bg = "grey10",
+         addgrid.col = "gray50",
+         tl.cex=0.5,
+         number.cex=0.5)
+```
+From the correlation plot, there is almost no correlations, but income and loan has quite moderate value, so lets incpect it with scatter plot
+
+```{r}
+plot(loan~income, data=df_out)
+```
+From the scatter plot, as we can see, there is heteroscedasticity and therefore, we can use these two variable to make prediction.
+
+
+```{r}
+#install.packages("conflicted")
+library(conflicted)
+conflict_prefer("apply", "base")
+
+# Create Response Variable as DataFrame
+df_target=as.data.frame(df_out[c(4)])
+df_out = df_out[c(-4)]
+
+# Norm Z function declaration
+normalisasi=function(x){
+  xm=colMeans(x)  
+  jb=dim(x)[1] 
+  xc=x-rep(xm,each=jb) 
+  sdx=apply(x,2,sd) 
+  xstd=xc/rep(sdx,each=jb)
+  output=data.frame(xstd)
+  #output=data.frame(xstd,x)
+  return(output)
+}
+
+
+# Min-Max Norm function declaration
+min_max_norm <- function(x) {
+    (x - min(x)) / (max(x) - min(x))
+  }
+
+# Normalization
+#df_norm = normalisasi(df_out)
+df_norm = as.data.frame(lapply(df_out, min_max_norm))
+
+# Outer Join Dataset
+df_norm = data.frame(df_target,df_norm)
+
+# Label encoding for response variable
+df_norm$default = factor(df_norm$default, levels = c(0,1))
+#df_norm
+head(df_norm)
+str(df_norm)
+#unique(df_norm$Attrition)
+```
+Next, create train and test dataset
+
+### Create Class Balanced Train and test Dataset
+```{r}
+#install.packages("caret")
+library(caret)
+'%ni%' = Negate('%in%')
+options(scipen=999)
+
+set.seed(100)
+str(df_norm)
+
+df_train_test= df_norm
+```
+
+
+```{r}
+trainDataIndex= createDataPartition(df_train_test$default, p=0.8, list = F)
+
+trainData = df_train_test[trainDataIndex,]
+testData = df_train_test[-trainDataIndex,]
+
+# Down sample
+set.seed(100)
+down_train=downSample(x=trainData[, colnames(trainData)%ni%"default"], y=trainData$default) 
+#table(down_train$Class)
+
+# Up Sample
+set.seed(100)
+up_train = upSample(x = trainData[, colnames(trainData)%ni%"default"], y = trainData$default) 
+table(up_train$Class)
+```
+
+
+### Create Logistic Regression Model
+```{r}
+logitmod = glm(Class~., family = "binomial", data=up_train)
+summary(logitmod)
+```
+
+### Model Validation using Accuracy Metrics
+```{r}
+pred <- predict(logitmod, testData, type = "response")
+
+y_pred_num = ifelse(pred>0.5,1,0)
+y_pred = factor(y_pred_num, levels=c(0,1))
+y_act = testData$default
+
+mean(y_pred==y_act)
+```
+
