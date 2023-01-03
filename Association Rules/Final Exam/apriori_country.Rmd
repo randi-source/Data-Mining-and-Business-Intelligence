@@ -1,0 +1,234 @@
+---
+title: "Apriori Analysis"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Import Library
+
+```{r}
+#Load Package
+library(arules)
+library(arulesViz)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(gdata)
+library(glue)
+```
+
+## 2. Create function to create multiple apriori model
+
+Apriori models created for each combination of country, support and confidence
+
+```{r}
+training_market_basket_by_country <- function (arules_transaction, country = "", arule_support = 0.0, arule_confidence = 0.0, arule_min_support = 0.0, arule_min_confidence = 0.0, max_date = "", min_date = "") {
+    cat(paste0("\n######################### Parameter: sup=", arule_support, " | conf=", arule_confidence, " | min_sup=", arule_min_support, " | min_conf=", arule_min_confidence, " #########################\n"))
+    
+    # Execute apriori for all combination of parameter
+    arule_result <- apriori(arules_transaction, parameter = list(supp=arule_support, conf=arule_confidence,  minlen=2, maxlen=5)) 
+    summary(arule_result)
+
+    # Append the results into dataframe
+    if (all(!is.na(summary(size(arule_result)))))  {
+        df_arule_result <- data.frame(
+            lhs = labels(lhs(arule_result)),
+            rhs = labels(rhs(arule_result)),
+            arule_result@quality,
+            min_confidence=arule_min_confidence,
+            min_support=as.double(arule_min_support),
+            country = country) %>%
+            mutate(lhs = gsub('\\{|\\}', '', lhs),
+                   rhs = gsub('\\{|\\}', '', rhs),
+                   min_date=min_date,
+                   max_date=max_date,
+                   tanggal_analisis=as.Date(Sys.Date(), "%Y-%m-%d"))
+
+        df_arule_result_lhs_size <- df_arule_result %>% mutate(lhs_length = sapply(strsplit(as.character(lhs), ","), length))
+        df_arule_result_final <- df_arule_result_lhs_size 
+    } else {
+        print (paste0("df_arule_result_final [sup=", arule_support, "][conf=", arule_confidence, "] is null"))
+        
+        df_arule_result_final <- NULL
+    }
+    return(list("df_arule_result_final" = df_arule_result_final))
+}
+```
+
+
+## 3. Create function for Data Preprocessing and Apriori Analysis
+
+This function were build to do data preprocessing and apriori analysis either for all country apriori analysis nor specific country apriori analysis utilizing function in function approach by putting function in previous step in this function. The output were in form of apriori table for every combination of parameter.
+
+```{r}
+process_apriori <- function(df_arules_transaction_v1d, apriori_config_list, country, last_date){
+  # Initialize empty dataframe
+  datas <- data.frame(NULL)
+
+  df_arules_transaction_v1e <- df_arules_transaction_v1d %>% mutate(data_date = as.Date(date, "%Y-%m-%d"))
+  df_arules_transaction_v1f<-df_arules_transaction_v1e[order(df_arules_transaction_v1e$data_date),] 
+  
+  df_arules_transaction_v1g <- df_arules_transaction_v1f %>% select (-data_date)
+  
+  df_arules_transaction_v1h <- df_arules_transaction_v1g %>% mutate (BillNo=as.factor(BillNo),
+                                                   item=as.factor(Itemname))
+  
+  df_arules_transaction_v1h1 <- df_arules_transaction_v1h %>% mutate (item = str_replace_all(item, ",", "#####"))
+  
+  df_arules_transaction_v1i = as.data.frame(df_arules_transaction_v1h1)
+  
+  arules_transaction <- as(split(df_arules_transaction_v1i[, "item"], df_arules_transaction_v1i[, "BillNo"]), "transactions")
+  
+  
+  min_date_v0<-df_arules_transaction_v1f$data_date%>%head(1)
+  max_date_v0<-df_arules_transaction_v1f$data_date%>%tail(1)
+  
+  min_date <- as.Date(min_date_v0, "%Y-%m-%d")
+  max_date <- as.Date(max_date_v0, "%Y-%m-%d")
+  
+  if (is.null(last_date)) {
+    last_date <- max_date
+  } else {
+    if (max_date > last_date) {
+      last_date <- max_date
+    }
+  }
+  
+  for (i in 1:nrow(apriori_config_list)){
+    arule_result <- training_market_basket_by_country(
+      arules_transaction,
+      country = country,
+      arule_support = apriori_config_list["support"][i,], 
+      arule_confidence = apriori_config_list["confidence"][i,], 
+      arule_min_support = apriori_config_list["min_support"][i,], 
+      arule_min_confidence = apriori_config_list["min_confidence"][i,],
+      max_date = max_date,
+      min_date = min_date
+    )
+
+    if (!is.null(arule_result)){
+      datas <- bind_rows(datas, arule_result$df_arule_result_final)
+    }
+  }
+  return(list("datas" = datas, "last_date" = last_date))
+}
+```
+
+## 4. Set Parameter
+
+Set the parameter to specify the support and convidence of the analysis
+
+```{r}
+jenis_analisis <- "Itemname"
+
+last_date <- NULL
+datas_temp <- data.frame(NULL)
+apriori_config_list <- data.frame(
+  support <- c(0.01, 0.1),
+  confidence <- c(0.5, 0.5),
+  min_support <- c(0.01, 0.1),
+  min_confidence <- c(0.5, 0.5)
+)
+colnames(apriori_config_list) <- c("support", "confidence", "min_support", "min_confidence")
+```
+
+## 5. Load Tabel and Partial Data Preprocessing
+
+```{r}
+# Load Table and Data Preprocessing
+df_arules_transaction_v1a = read.csv("D:/Kerja/S2/Data Mining dan Business Intelligence/UAS/Script R/Prod/Assignment-1_Data.csv", sep = ";",
+                 dec = ",") %>% distinct()
+
+head(df_arules_transaction_v1a)
+
+df_arules_transaction_v1b = df_arules_transaction_v1a%>% 
+    mutate(
+        Price=as.numeric(Price),
+        date=as.Date(Date, "%d/%m/%Y"),
+        Revenue=Price*Quantity) %>%
+    drop_na()
+
+df_arules_transaction_v1c1 = df_arules_transaction_v1b%>%
+    select(,-c(Date,Price, CustomerID, Quantity, Revenue))
+
+
+remove.list = paste(c("","?","? sold as sets?","??","?? missing", "???","????missing","???missing","?display?","?lost","?missing","?sold as sets?"), collapse = '|')
+
+df_arules_transaction_v1d = df_arules_transaction_v1c1 %>%
+  filter(!grepl(remove.list, Itemname, fixed = TRUE))
+```
+
+## 6. Train the Model for ALL COUNTRY
+
+```{r, results='hide'}
+apriori_result <- process_apriori(
+  df_arules_transaction_v1d,
+  apriori_config_list,
+  "ALL COUNTRY",
+  last_date
+)
+```
+
+## 7. Create Another Set Parameter for Iterative Apriori Analysis
+
+This approach were formed since there is not enough ram to analyze iterative apriori if the configuration is the same as ALL COUNTRY
+
+```{r}
+apriori_config_list_c <- data.frame(
+  support <- c(0.1, 0.2),
+  confidence <- c(0.5, 0.5),
+  min_support <- c(0.1, 0.2),
+  min_confidence <- c(0.5, 0.5)
+)
+colnames(apriori_config_list_c) <- c("support", "confidence", "min_support", "min_confidence")
+```
+
+## 8. Train the Model for Each Country 
+
+```{r}
+last_date <- apriori_result$last_date
+
+datas_temp <- bind_rows(datas_temp, apriori_result$datas)
+
+df_country_list <- df_arules_transaction_v1d %>% group_by(Country) %>% summarise(count = n()) %>% ungroup()
+
+df_country_list_selected = df_country_list %>%
+  filter(Country=="United Kingdom" | Country=="France" | Country=="Germany" | Country=="Spain")
+
+for (i in 1:nrow(df_country_list_selected)){
+  current_country <- as.character(df_country_list_selected["Country"][i,])
+  
+  cat(paste0("COUNTRY: ", current_country, "\n"))
+  
+  df_current_country <- df_arules_transaction_v1d %>% filter(Country == current_country)
+  
+  apriori_result <- process_apriori(
+    df_current_country,
+    apriori_config_list_c,
+    current_country, 
+    last_date
+  )
+  
+  last_date <- apriori_result$last_date
+  datas_temp <- bind_rows(datas_temp, apriori_result$datas)
+}
+```
+
+```{r}
+dim(datas_temp)
+```
+
+## 9. Export the Table to .csv
+
+```{r}
+write.csv(datas_temp, "D:/Kerja/S2/Data Mining dan Business Intelligence/UAS/Script R/Prod/apriori.csv")
+
+write.csv(df_arules_transaction_v1b, "D:/Kerja/S2/Data Mining dan Business Intelligence/UAS/Script R/Prod/sales_data_clean.csv")
+```
+
+
